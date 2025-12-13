@@ -21,7 +21,7 @@ void netConnectionUdpOpen(UdpSocket *sock, uint16_t localPort, uint8_t *addr,
     memcpy(sock->conn->ip, addr, IPv4_BYTE_SIZE);
   if (!sock->conn->localPort) // localPort can be 0 but still bound() properly
     sock->conn->localPort =
-        localPort ? localPort : netSocketUdpPortGen(&selectedNIC->udp);
+        localPort ? localPort : netPortsGen(&selectedNIC->udp.netPortsUdp);
   if (remotePort)
     sock->conn->remotePort = remotePort;
 
@@ -57,10 +57,7 @@ void netConnectionUdpClose(UdpConnection *conn, UdpStore *store) {
 
   // mark the local port as free
   assert(localPort);
-  spinlockAcquire(&store->LOCK_MAP_PORTS);
-  assert(bitmapGenericGet(store->ports, localPort));
-  bitmapGenericSet(store->ports, localPort, false);
-  spinlockRelease(&store->LOCK_MAP_PORTS);
+  netPortsFree(&store->netPortsUdp, localPort);
 }
 
 extern VfsHandlers udpSocketHandlers;
@@ -96,40 +93,6 @@ bool netSocketUdpClose(OpenFile *fd) {
   return true;
 }
 
-uint16_t netSocketUdpPortGenInner(UdpStore *store, int i) {
-  bitmapGenericSet(store->ports, i, true);
-  store->lastEphPort = i;
-  spinlockRelease(&store->LOCK_MAP_PORTS);
-  return i;
-}
-
-uint16_t netSocketUdpPortGen(UdpStore *store) {
-  spinlockAcquire(&store->LOCK_MAP_PORTS);
-  store->lastEphPort++;
-  if (store->lastEphPort < UDP_EPH_START)
-    store->lastEphPort = UDP_EPH_START + rand() % 128;
-  for (int i = store->lastEphPort; i < UDP_AVAILABLE_PORTS; i++) {
-    if (!bitmapGenericGet(store->ports, i))
-      return netSocketUdpPortGenInner(store, i);
-  }
-
-  for (int i = UDP_EPH_START; i < store->lastEphPort; i++) {
-    if (!bitmapGenericGet(store->ports, i))
-      return netSocketUdpPortGenInner(store, i);
-  }
-
-  // you opened too many connections, face the consequences
-  assert(false);
-  return -1;
-}
-
-void netSocketUdpPortRelease(UdpStore *store, uint16_t port) {
-  spinlockAcquire(&store->LOCK_MAP_PORTS);
-  assert(bitmapGenericGet(store->ports, port));
-  bitmapGenericSet(store->ports, port, false);
-  spinlockRelease(&store->LOCK_MAP_PORTS);
-}
-
 size_t netSocketUdpBind(OpenFile *fd, sockaddr_linux *addr, size_t len) {
   assert(len == sizeof(sockaddr_in_linux));
   sockaddr_in_linux *sockaddr = (sockaddr_in_linux *)addr;
@@ -140,15 +103,8 @@ size_t netSocketUdpBind(OpenFile *fd, sockaddr_linux *addr, size_t len) {
     return ERR(EINVAL);
 
   uint16_t localPort = switch_endian_16(sockaddr->sin_port);
-  if (localPort) {
-    spinlockAcquire(&selectedNIC->udp.LOCK_MAP_PORTS);
-    bool existing = bitmapGenericGet(selectedNIC->udp.ports, localPort);
-    if (!existing)
-      bitmapGenericSet(selectedNIC->udp.ports, localPort, true);
-    spinlockRelease(&selectedNIC->udp.LOCK_MAP_PORTS);
-    if (existing)
-      return ERR(EADDRINUSE);
-  }
+  if (localPort && !netPortsMarkSafe(&selectedNIC->udp.netPortsUdp, localPort))
+    return ERR(EADDRINUSE);
 
   netConnectionUdpOpen(sock, localPort, 0, 0);
   spinlockRelease(&sock->LOCK_SOCKET);
@@ -273,6 +229,7 @@ size_t netSocketUdpRecvfrom(OpenFile *fd, uint8_t *out, size_t limit, int flags,
 }
 
 size_t netSocketUdpRecvmsg(OpenFile *fd, struct msghdr_linux *msg, int flags) {
+  // todo: this and /usr/bin/testing (along with nc on a domain)
   assert(false);
   return -1;
 }

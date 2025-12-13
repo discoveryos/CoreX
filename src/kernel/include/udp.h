@@ -1,6 +1,7 @@
 #include "eth.h"
 #include "ipv4.h"
 #include "linked_list.h"
+#include "netports.h"
 #include "util.h"
 
 #ifndef NET_UDP_H
@@ -42,16 +43,11 @@ typedef struct UdpConnection {
   LLcontrol dsBuffers; // struct udpBuffer
 } UdpConnection;
 
-#define UDP_AVAILABLE_PORTS 65536
-#define UDP_EPH_START 49152
-
 typedef struct UdpStore {
   LLcontrol dsUdpConnections; // struct UdpConnection
   Spinlock  LOCK_LL_UDP_CONNS;
 
-  uint8_t  ports[UDP_AVAILABLE_PORTS / 8]; // bitmap
-  uint16_t lastEphPort;
-  Spinlock LOCK_MAP_PORTS;
+  NetPorts netPortsUdp;
 } UdpStore;
 
 typedef struct UdpSocket {
@@ -74,7 +70,6 @@ typedef struct sockaddr_in_linux {
 void netUdpStoreInit(UdpStore *store);
 void netUdpHandle(void *_nic, void *packet, uint32_t size);
 
-void     netSocketUdpInit(void *_fd);
-uint16_t netSocketUdpPortGen(UdpStore *store);
+void netSocketUdpInit(void *_fd);
 
 #endif

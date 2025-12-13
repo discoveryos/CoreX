@@ -7,7 +7,7 @@
 
 void netUdpStoreInit(UdpStore *store) {
   LinkedListInit(&store->dsUdpConnections, sizeof(UdpConnection));
-  store->ports[0] = 0xff;
+  store->netPortsUdp.ports[0] = 0xff;
 }
 
 bool netUdpConnSearchCb(void *data, void *ctx) {
